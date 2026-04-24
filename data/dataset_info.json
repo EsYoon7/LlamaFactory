@@ -1,4 +1,76 @@
 {
+  "agentnet_train": {
+    "file_name": "/home/qid/esyoon/blob_data/dataset/AgentNet/processed_sharegpt/train.parquet",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images",
+      "tools": "tools"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "observation_tag": "observation",
+      "function_tag": "function_call",
+      "system_tag": "system"
+    }
+  },
+  "agentnet_val": {
+    "file_name": "/home/qid/esyoon/blob_data/dataset/AgentNet/processed_sharegpt/val.parquet",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images",
+      "tools": "tools"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "observation_tag": "observation",
+      "function_tag": "function_call",
+      "system_tag": "system"
+    }
+  },
+  "web_agent_cu_train": {
+    "file_name": "web_agent_cu/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images",
+      "tools": "tools"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "observation_tag": "observation",
+      "function_tag": "function_call",
+      "system_tag": "system"
+    }
+  },
+  "web_agent_cu_val": {
+    "file_name": "web_agent_cu/val.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images",
+      "tools": "tools"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "observation_tag": "observation",
+      "function_tag": "function_call",
+      "system_tag": "system"
+    }
+  },
   "identity": {
     "file_name": "identity.json"
   },

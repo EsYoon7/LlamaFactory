@@ -1,0 +1,62 @@
+### model
+model_name_or_path: /home/qid/esyoon/workspace/models/Qwen3.5-9B
+# Route the HF arrow build cache to tmpfs so the streamed AgentNet JSONL
+# never lands on permanent disk. /dev/shm is shm-backed (64 GiB on
+# es_nemo2502) and is discarded on container restart.
+cache_dir: /dev/shm/agentnet_hf_cache
+image_max_pixels: 262144
+video_max_pixels: 16384
+trust_remote_code: true
+deepspeed: examples/deepspeed/ds_z2_config.json
+flash_attn: sdpa
+gradient_checkpointing: true
+enable_liger_kernel: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_target: q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj
+freeze_vision_tower: true
+freeze_multi_modal_projector: true
+
+### dataset
+# Run scripts/agentnet/preprocess.py once before launching this config.
+# Images are read from the blob mount at /home/qid/esyoon/blob_data/... (no local copy).
+dataset: agentnet_train
+eval_dataset: agentnet_val
+template: qwen3_5
+cutoff_len: 32768
+mask_history: false
+preprocessing_num_workers: 60
+dataloader_num_workers: 4
+overwrite_cache: true
+
+### output
+output_dir: saves/qwen3_5-9b/agentnet/lora_sft_260424_promptfixed
+logging_steps: 2
+save_steps: 50
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 16
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### eval
+per_device_eval_batch_size: 1
+eval_strategy: steps
+prediction_loss_only: true
+eval_accumulation_steps: 1
+eval_steps: 200

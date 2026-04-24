@@ -47,6 +47,67 @@ class PackingParams:
 
 @dataclass
 class SupervisedDatasetProcessor(DatasetProcessor):
+    # esyoon 2026-04-16: lazily resolve the <|vision_end|> token id so we can count how
+    # many images were FULLY retained after cutoff-based per-turn truncation.
+    # ``process_messages`` expands every ``<image>`` placeholder to
+    # ``<|vision_start|><|image_pad|>...<|vision_end|>`` using the full images list, but the
+    # truncation loop below may drop whole turns -- or slice mid-image -- leaving image
+    # tensors in ``images`` whose placeholder tokens are missing or incomplete. This causes
+    # later tokens-vs-features and rope-index mismatches at model forward. We count
+    # <|vision_end|> specifically (rather than <|vision_start|>) so that a half-truncated
+    # image block is NOT counted as surviving: only images whose complete
+    # <|vision_start|>...<|image_pad|>...<|vision_end|> run stayed inside the cutoff are
+    # kept; ``images`` is trimmed to match.
+    # Stored on __dict__ to avoid altering this class's dataclass signature.
+    def _get_vision_end_token_id(self) -> Optional[int]:
+        cached = self.__dict__.get("_cached_vision_end_token_id", "unset")
+        if cached != "unset":
+            return cached  # may be None, meaning "this tokenizer has no vision_end token"
+        tok_id: Optional[int]
+        try:
+            tok_id = self.tokenizer.convert_tokens_to_ids("<|vision_end|>")
+            if tok_id is None or tok_id == getattr(self.tokenizer, "unk_token_id", None):
+                tok_id = None
+        except Exception:
+            tok_id = None
+        self.__dict__["_cached_vision_end_token_id"] = tok_id
+        return tok_id
+
+    def _get_vision_start_token_id(self) -> Optional[int]:
+        cached = self.__dict__.get("_cached_vision_start_token_id", "unset")
+        if cached != "unset":
+            return cached
+        tok_id: Optional[int]
+        try:
+            tok_id = self.tokenizer.convert_tokens_to_ids("<|vision_start|>")
+            if tok_id is None or tok_id == getattr(self.tokenizer, "unk_token_id", None):
+                tok_id = None
+        except Exception:
+            tok_id = None
+        self.__dict__["_cached_vision_start_token_id"] = tok_id
+        return tok_id
+
+    # esyoon 2026-04-16: detect samples whose trailing image block was truncated by the
+    # cutoff (a <|vision_start|> with no matching <|vision_end|> before EOS). These
+    # trajectories show the model only PART of the screenshot the action was conditioned
+    # on, so we drop the entire sample rather than trying to salvage it. Returns
+    # (n_complete_images, had_incomplete_image).
+    def _check_image_completeness(self, input_ids: list[int]) -> tuple[int, bool]:
+        vs_id = self._get_vision_start_token_id()
+        ve_id = self._get_vision_end_token_id()
+        if vs_id is None or ve_id is None:
+            return 0, False
+        n_complete = 0
+        open_count = 0
+        for t in input_ids:
+            if t == vs_id:
+                open_count += 1
+            elif t == ve_id:
+                if open_count > 0:
+                    open_count -= 1
+                    n_complete += 1
+        return n_complete, open_count > 0
+
     def _encode_data_example(
         self,
         prompt: list[dict[str, str]],
@@ -122,6 +183,23 @@ class SupervisedDatasetProcessor(DatasetProcessor):
                 videos=examples["_videos"][i] or [],
                 audios=examples["_audios"][i] or [],
             )
+            # esyoon 2026-04-16: drop the whole sample if any image is missing or
+            # incomplete in input_ids vs the images list. Two cases this catches:
+            #  (a) trailing image block truncated mid-way (vision_start with no end)
+            #  (b) an entire image-bearing turn dropped wholesale by per-turn truncation
+            #      so the image still sits in the images list but its vision tokens are
+            #      gone. In either case the trajectory becomes inconsistent and would
+            #      mismatch image features vs image tokens at model forward.
+            sample_images = examples["_images"][i]
+            if sample_images:
+                n_complete, had_incomplete = self._check_image_completeness(input_ids)
+                if had_incomplete or n_complete != len(sample_images):
+                    logger.warning_rank0(
+                        f"Dropped sample: image-token / images-list mismatch "
+                        f"(n_complete={n_complete}, n_images={len(sample_images)}, "
+                        f"had_incomplete={had_incomplete}, cutoff_len={self.data_args.cutoff_len})."
+                    )
+                    continue
             model_inputs["input_ids"].append(input_ids)
             model_inputs["attention_mask"].append([1] * len(input_ids))
             model_inputs["labels"].append(labels)
@@ -169,11 +247,25 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
             if length > self.data_args.cutoff_len:
                 logger.warning_rank0(f"Dropped lengthy example with length {length} > {self.data_args.cutoff_len}.")
             else:
+                # esyoon 2026-04-16: same drop-on-image-mismatch policy as the
+                # SupervisedDatasetProcessor path -- skip whenever the surviving image
+                # blocks in input_ids don't match the images list (either truncated
+                # mid-image, or a whole image turn dropped, or any cutoff effect).
+                sample_images = examples["_images"][i] or []
+                if sample_images:
+                    n_complete, had_incomplete = self._check_image_completeness(input_ids)
+                    if had_incomplete or n_complete != len(sample_images):
+                        logger.warning_rank0(
+                            f"Dropped sample: image-token / images-list mismatch "
+                            f"(n_complete={n_complete}, n_images={len(sample_images)}, "
+                            f"had_incomplete={had_incomplete}, cutoff_len={self.data_args.cutoff_len})."
+                        )
+                        continue
                 lengths.append(length)
                 length2indexes[length].append(valid_num)
                 batch_input_ids.append(input_ids)
                 batch_labels.append(labels)
-                batch_images.append(examples["_images"][i] or [])
+                batch_images.append(sample_images)
                 batch_videos.append(examples["_videos"][i] or [])
                 batch_audios.append(examples["_audios"][i] or [])
                 valid_num += 1
